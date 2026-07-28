@@ -1,6 +1,6 @@
 # dcbot
 
-A lightweight D++ Discord bot skeleton in C++.
+A lightweight D++ Discord bot test code :V in C++.
 
 ## Requirements
 
