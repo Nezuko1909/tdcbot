@@ -1,6 +1,7 @@
 #include "handlers/command_dispatcher.h"
 #include "commands/help.h"
 #include "commands/ping.h"
+#include "commands/sauce.h"
 #include "utils/logger.h"
 
 namespace handlers {
@@ -16,6 +17,11 @@ void dispatch_slash_command(const dpp::slashcommand_t& event) {
 
     if (command_name == "help") {
         commands::handle_help_command(event);
+        return;
+    }
+
+    if (command_name == "sauce") {
+        
         return;
     }
 

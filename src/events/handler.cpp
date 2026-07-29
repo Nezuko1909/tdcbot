@@ -1,6 +1,7 @@
 #include "events/handler.h"
 #include "commands/help.h"
 #include "commands/ping.h"
+#include "commands/sauce.h"
 #include "handlers/command_dispatcher.h"
 #include "utils/logger.h"
 
@@ -13,6 +14,7 @@ void register_events(dpp::cluster& bot) {
         // Register bot slash commands once the bot is ready
         bot.global_command_create(commands::create_ping_command());
         bot.global_command_create(commands::create_help_command());
+        bot.global_command_create(commands::create_sauce_command());
     });
 
     bot.on_slashcommand([](const dpp::slashcommand_t& event) {
