@@ -23,6 +23,11 @@ void register_events(dpp::cluster& bot) {
         logger::info("events", "Slash command received: " + event.command.get_command_name());
         handlers::dispatch_slash_command(event);
     });
+
+    bot.on_message_context_menu([](const dpp::message_context_menu_t& event) {
+        logger::info("events", "Context menu command received: " + event.command.get_command_name());
+        handlers::dispatch_context_menu(event);
+    });
 }
 
 } // namespace events

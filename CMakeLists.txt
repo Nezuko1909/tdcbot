@@ -20,6 +20,7 @@ include_directories(
 
 # Find D++ installed on the system
 find_package(DPP REQUIRED)
+find_package(CURL REQUIRED)
 
 # Collect project source files
 file(GLOB_RECURSE BOT_SOURCES
@@ -45,6 +46,7 @@ target_include_directories(dcbot PRIVATE
 # Link system-installed D++
 target_link_libraries(dcbot PRIVATE
     dpp
+    CURL::libcurl
 )
 
 # Debug build definition

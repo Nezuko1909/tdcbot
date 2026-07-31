@@ -10,7 +10,7 @@ dpp::slashcommand create_help_command(dpp::snowflake guild_id) {
 
 void handle_help_command(const dpp::slashcommand_t& event) {
     logger::info("commands::help", "Handling /help command");
-    event.reply("Available commands: /ping, /help");
+    event.reply("Available commands: /ping, /help, /sauce (right-click on a message -> Apps -> Sauce)");
 }
 
 } // namespace commands

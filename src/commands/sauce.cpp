@@ -1,5 +1,6 @@
 #include "commands/sauce.h"
 #include "utils/logger.h"
+#include <curl/curl.h>
 
 namespace commands {
     dpp::slashcommand create_sauce_slash_command() {
@@ -10,14 +11,27 @@ namespace commands {
         return dpp::slashcommand("sauce", "", 0).set_type(dpp::ctxm_message);
     }
 
+    std::vector<std::string> find_saucenao(const std::string& image_url) {
+        // TODO : Implement the logic to call the SauceNAO API and return the result.
+        std::vector<std::string> results;
+
+        
+    }
+
     static void process_sauce(dpp::cluster& bot, const dpp::message& target, std::function<void(const std::string&)> respond) {
         std::string mes_content = target.content;
 
         if (!target.attachments.empty()) {
-            mes_content += "\n\n #Image: \n" + target.attachments[0].url;
+            mes_content += "\n\n # Image: \n" + target.attachments[0].url;
         }
 
-        // TODO: logic reverse image search / sauce here
+        for (const auto& attachment : target.attachments) {
+            std::vector<std::string> results = find_saucenao(attachment.url);
+        }
+
+        for (auto &res : results) {
+            mes_content += "\n\n # SauceNAO Result: \n" + res;
+        }
 
         respond(mes_content);
     }
