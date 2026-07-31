@@ -9,12 +9,14 @@ namespace events {
 
 void register_events(dpp::cluster& bot) {
     bot.on_ready([&bot](const dpp::ready_t& event) {
+        
         logger::info("events", "Bot is online and ready");
 
         // Register bot slash commands once the bot is ready
         bot.global_command_create(commands::create_ping_command());
         bot.global_command_create(commands::create_help_command());
-        bot.global_command_create(commands::create_sauce_command());
+        bot.global_command_create(commands::create_sauce_slash_command());
+        bot.global_command_create(commands::create_sauce_context_command());
     });
 
     bot.on_slashcommand([](const dpp::slashcommand_t& event) {

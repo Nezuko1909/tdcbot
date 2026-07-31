@@ -3,36 +3,32 @@
 
 namespace commands {
     dpp::slashcommand create_sauce_slash_command() {
-        return dpp::slashcommand("sauce", "", 0)
-            .add_option(
-                dpp::command_option(dpp::co_string, "link", "Link", true)
-            );
+        return dpp::slashcommand("sauce", "", 0).add_option(dpp::command_option(dpp::co_string, "link", "link", true));
     }
 
     dpp::slashcommand create_sauce_context_command() {
-        return dpp::slashcommand("Sauce", "", 0)
-            .set_type(dpp::ctxm_message);
+        return dpp::slashcommand("sauce", "", 0).set_type(dpp::ctxm_message);
     }
 
     static void process_sauce(dpp::cluster& bot, const dpp::message& target, std::function<void(const std::string&)> respond) {
-        std::string result = "Content: " + target.content;
+        std::string mes_content = target.content;
 
         if (!target.attachments.empty()) {
-            result += "\nImage: " + target.attachments[0].url;
+            mes_content += "\n\n #Image: \n" + target.attachments[0].url;
         }
 
         // TODO: logic reverse image search / sauce here
 
-        respond(result);
+        respond(mes_content);
     }
 
     // --- Handler cho context menu (right-click -> Apps -> Sauce) ---
 
     void handle_sauce_context_menu(const dpp::message_context_menu_t& event) {
-        logger::info("commands::sauce", "Handling Sauce context menu command");
+        logger::info("commands::sauce", "Handling sauce context menu command");
 
-        const dpp::message& target = event.get_message(); 
-        process_sauce(*event.from->creator, target, [&event](const std::string& text) {
+        const dpp::message& target = event.get_message();
+        process_sauce(*event.from()->creator, target, [&event](const std::string& text) {
             event.reply(text);
         });
     }
@@ -54,13 +50,13 @@ namespace commands {
 
         event.thinking(); // message_get is async -> defer 
 
-        event.from->creator->message_get(message_id, channel_id, [event](const dpp::confirmation_callback_t& cb) {
+        event.from()->creator->message_get(message_id, channel_id, [event](const dpp::confirmation_callback_t& cb) {
             if (cb.is_error()) {
                 event.edit_response("Message not found (invalid link or bot lacks permission).");
                 return;
             }
             dpp::message target = std::get<dpp::message>(cb.value);
-            process_sauce(*event.from->creator, target, [&event](const std::string& text) {
+            process_sauce(*event.from()->creator, target, [&event](const std::string& text) {
                 event.edit_response(text);
             });
         });
