@@ -35,8 +35,17 @@ void warn(const std::string& message) {
     std::cout << timestamp() << " [WARN] " << message << std::endl;
 }
 
+void warn(const std::string& tag, const std::string& message) {
+    std::cout << timestamp() << " [WARN] [" << tag << "] " << message << std::endl;
+}
+
 void error(const std::string& message) {
     std::cerr << timestamp() << " [ERROR] " << message << std::endl;
 }
 
+void error(const std::string& tag, const std::string& message) {
+    std::cerr << timestamp() << " [ERROR] [" << tag << "] " << message << std::endl;
+}
+
 } // namespace logger
+
