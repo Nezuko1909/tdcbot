@@ -43,7 +43,7 @@ target_include_directories(dcbot PRIVATE
     ${CMAKE_SOURCE_DIR}/src
 )
 
-# Link system-installed D++
+# Link system-installed D++ and libcurl
 target_link_libraries(dcbot PRIVATE
     dpp
     CURL::libcurl
@@ -69,10 +69,13 @@ if(BUILD_TESTING)
 
     add_executable(dcbot_tests
         tests/test_main.cpp
+        ${BOT_SOURCES}
     )
 
     target_link_libraries(dcbot_tests PRIVATE
         Catch2::Catch2WithMain
+        dpp
+        CURL::libcurl
     )
 
     add_test(
