@@ -310,7 +310,7 @@ static dpp::message build_trace_page_message(const TraceSearchSession &session) 
     } else if (!item.title_native.empty()) {
         main_title = item.title_native;
     } else if (!item.filename.empty()) {
-        main_title = item.filename;
+        main_title = "Anime Title not found :<" + item.filename;
     } else {
         main_title = "Unknown Anime Title";
     }
@@ -339,11 +339,6 @@ static dpp::message build_trace_page_message(const TraceSearchSession &session) 
     std::string time_str = format_timestamp(item.from_sec) + " - " + format_timestamp(item.to_sec);
     embed.add_field("Episode & Timestamp", ep_str + " (" + time_str + ")", true);
 
-    // Filename
-    if (!item.filename.empty()) {
-        embed.add_field("File Name", item.filename, false);
-    }
-
     // External Database Links & IDs
     std::ostringstream links_ss;
     if (item.anilist_id > 0) {
@@ -353,7 +348,7 @@ static dpp::message build_trace_page_message(const TraceSearchSession &session) 
         links_ss << "|  [MyAnimeList (ID: " << item.mal_id << ")](https://myanimelist.net/anime/" << item.mal_id << ")  ";
     }
     if (!links_ss.str().empty()) {
-        embed.add_field("Database Links", links_ss.str(), false);
+        embed.add_field("More info", links_ss.str(), false);
     }
 
     // Video preview link
