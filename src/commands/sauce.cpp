@@ -231,6 +231,7 @@ struct SearchResult {
     std::string author;
     std::string author_url;
     std::string source_url;
+    std::string extra_source_url;
     std::string thumbnail_url;
     std::string extra_info;
 };
@@ -338,6 +339,8 @@ static SearchResult search_saucenao(const std::string &image_url, EngineDiagnost
 
             for (const auto &item : root["results"]) {
                 CandidateDetail cand;
+                std::string extra_src_url = "";
+
                 if (item.contains("header")) {
                     const auto &header = item["header"];
                     if (header.contains("similarity")) {
@@ -356,23 +359,68 @@ static SearchResult search_saucenao(const std::string &image_url, EngineDiagnost
                     const auto &data = item["data"];
                     if (data.contains("ext_urls") && data["ext_urls"].is_array() && !data["ext_urls"].empty()) {
                         cand.source_url = data["ext_urls"][0].get<std::string>();
-                    } else if (data.contains("source") && !data["source"].is_null()) {
-                        cand.source_url = data["source"].get<std::string>();
                     }
 
-                    if (data.contains("title") && !data["title"].is_null()) {
-                        cand.title = data["title"].get<std::string>();
-                    } else if (data.contains("jp_name") && !data["jp_name"].is_null()) {
-                        cand.title = data["jp_name"].get<std::string>();
-                    } else if (data.contains("source") && !data["source"].is_null()) {
-                        cand.title = data["source"].get<std::string>();
+                    if (data.contains("source") && !data["source"].is_null()) {
+                        std::string src_val = data["source"].get<std::string>();
+                        if (src_val.rfind("http://", 0) == 0 || src_val.rfind("https://", 0) == 0) {
+                            extra_src_url = src_val;
+                            if (cand.source_url.empty()) {
+                                cand.source_url = src_val;
+                            }
+                        }
                     }
 
-                    if (data.contains("member_name") && !data["member_name"].is_null()) {
-                        res.author = data["member_name"].get<std::string>();
-                    } else if (data.contains("author_name") && !data["author_name"].is_null()) {
-                        res.author = data["author_name"].get<std::string>();
+                    // Extract Author / Artist
+                    std::string author_name = "";
+                    if (data.contains("member_name") && !data["member_name"].is_null() && !data["member_name"].get<std::string>().empty()) {
+                        author_name = data["member_name"].get<std::string>();
+                    } else if (data.contains("author_name") && !data["author_name"].is_null() && !data["author_name"].get<std::string>().empty()) {
+                        author_name = data["author_name"].get<std::string>();
+                    } else if (data.contains("creator") && !data["creator"].is_null()) {
+                        if (data["creator"].is_string() && !data["creator"].get<std::string>().empty()) {
+                            author_name = data["creator"].get<std::string>();
+                        } else if (data["creator"].is_array() && !data["creator"].empty() && data["creator"][0].is_string()) {
+                            author_name = data["creator"][0].get<std::string>();
+                        }
+                    } else if (data.contains("artist") && !data["artist"].is_null() && !data["artist"].get<std::string>().empty()) {
+                        author_name = data["artist"].get<std::string>();
+                    } else if (data.contains("twitter_user_handle") && !data["twitter_user_handle"].is_null() && !data["twitter_user_handle"].get<std::string>().empty()) {
+                        author_name = "@" + data["twitter_user_handle"].get<std::string>();
                     }
+
+                    // Extract Title (avoiding raw URLs as title text)
+                    std::string raw_title = "";
+                    if (data.contains("title") && !data["title"].is_null() && !data["title"].get<std::string>().empty()) {
+                        raw_title = data["title"].get<std::string>();
+                    } else if (data.contains("jp_name") && !data["jp_name"].is_null() && !data["jp_name"].get<std::string>().empty()) {
+                        raw_title = data["jp_name"].get<std::string>();
+                    } else if (data.contains("material") && !data["material"].is_null() && !data["material"].get<std::string>().empty()) {
+                        raw_title = data["material"].get<std::string>();
+                        if (data.contains("characters") && !data["characters"].is_null() && !data["characters"].get<std::string>().empty()) {
+                            raw_title += " (" + data["characters"].get<std::string>() + ")";
+                        }
+                    } else if (data.contains("source") && !data["source"].is_null() && !data["source"].get<std::string>().empty()) {
+                        std::string src_val = data["source"].get<std::string>();
+                        if (src_val.rfind("http://", 0) != 0 && src_val.rfind("https://", 0) != 0) {
+                            raw_title = src_val;
+                        }
+                    }
+
+                    if (raw_title.rfind("http://", 0) == 0 || raw_title.rfind("https://", 0) == 0) {
+                        raw_title = "";
+                    }
+
+                    if (raw_title.empty()) {
+                        if (!author_name.empty()) {
+                            raw_title = "Artwork by " + author_name;
+                        } else {
+                            raw_title = "Artwork Post";
+                        }
+                    }
+
+                    cand.title = raw_title;
+                    cand.extra_info = author_name;
                 }
 
                 if (cand.similarity >= 50.0f && !cand.source_url.empty()) {
@@ -391,7 +439,9 @@ static SearchResult search_saucenao(const std::string &image_url, EngineDiagnost
                 if (cand.accepted && (res.similarity < cand.similarity)) {
                     res.similarity = cand.similarity;
                     res.source_url = cand.source_url;
+                    res.extra_source_url = extra_src_url;
                     res.title = cand.title;
+                    res.author = cand.extra_info;
                     res.thumbnail_url = cand.thumbnail_url;
                 }
             }
@@ -440,7 +490,7 @@ static void perform_sauce_search(const std::string &image_url,
                 ? 0x2ECC71
                 : ((result.similarity >= 50.0f) ? 0xF1C40F : 0xE74C3C);
 
-        embed.set_title("SauceNAO Image Search Results")
+        embed.set_title("Image Search Result")
             .set_color(color)
             .set_footer(dpp::embed_footer().set_text("Searched via SauceNAO API"));
 
@@ -465,10 +515,6 @@ static void perform_sauce_search(const std::string &image_url,
             embed.add_field("Title", "Matched Result", false);
         }
 
-        if (!result.extra_info.empty()) {
-            embed.add_field("Details", result.extra_info, true);
-        }
-
         if (!result.author.empty()) {
             if (!result.author_url.empty()) {
                 embed.add_field("Author",
@@ -478,6 +524,13 @@ static void perform_sauce_search(const std::string &image_url,
             } else {
                 embed.add_field("Author", result.author, false);
             }
+        }
+
+        if (!result.extra_source_url.empty() && result.extra_source_url != result.source_url) {
+            embed.add_field("Original Source",
+                            "[Click here to view original post](" +
+                                result.extra_source_url + ")",
+                            false);
         }
 
         embed.add_field("Source Link",
