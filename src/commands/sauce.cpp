@@ -82,7 +82,7 @@ static std::string format_and_truncate_body(const std::string &body, size_t max_
     return formatted_body;
 }
 
-// --- Diagnostic Report Output Function (Uses ONLY logger namespace) ---
+// --- Diagnostic Report Output Function ---
 
 static void log_no_match_diagnostic(const std::string &query_image_url,
                                     const std::vector<EngineDiagnosticReport> &reports) {
@@ -152,11 +152,11 @@ static void log_no_match_diagnostic(const std::string &query_image_url,
 
     std::string final_reason;
     if (http_successful == 0) {
-        final_reason = "All network requests failed due to connection timeouts or unreachable endpoints.";
+        final_reason = "Network request failed due to connection timeouts or unreachable endpoint.";
     } else if (valid_parsed_responses == 0) {
-        final_reason = "All search engines returned empty or unparseable HTTP response bodies.";
+        final_reason = "SauceNAO API returned empty or unparseable response body.";
     } else if (accepted_matches == 0) {
-        final_reason = "Search engines responded, but no candidate met the required similarity threshold (>= 50%) or contained a valid source link.";
+        final_reason = "SauceNAO responded, but no candidate met the required similarity threshold (>= 50%) or contained a valid source link.";
     } else {
         final_reason = "No candidate accepted based on evaluation rules.";
     }
@@ -171,7 +171,6 @@ static void log_no_match_diagnostic(const std::string &query_image_url,
        << "  Final Reason             : " << final_reason << "\n"
        << "================================================================================\n";
 
-    // Call ONLY existing logger namespace!
     logger::warn("SauceDiagnostic", ss.str());
 }
 
@@ -186,37 +185,13 @@ net::HttpClient& get_sauce_http_client() {
             "SauceBot/0.1.0 (+https://github.com/Nezuko1909/tdcbot; kny1909.nezuko@gmail.com)"
         );
 
-        net::DomainPolicy trace_policy;
-        trace_policy.rate_limit_rps = 1.0;
-        trace_policy.burst_capacity = 3;
-        trace_policy.max_concurrent_requests = 2;
-        trace_policy.max_retries = 3;
-        trace_policy.cache_ttl = std::chrono::seconds(600);
-        instance.set_domain_policy("api.trace.moe", trace_policy);
-
-        net::DomainPolicy anilist_policy;
-        anilist_policy.rate_limit_rps = 1.5;
-        anilist_policy.burst_capacity = 5;
-        anilist_policy.max_concurrent_requests = 3;
-        anilist_policy.max_retries = 3;
-        anilist_policy.cache_ttl = std::chrono::seconds(600);
-        instance.set_domain_policy("graphql.anilist.co", anilist_policy);
-
-        net::DomainPolicy iqdb_policy;
-        iqdb_policy.rate_limit_rps = 0.5;
-        iqdb_policy.burst_capacity = 2;
-        iqdb_policy.max_concurrent_requests = 1;
-        iqdb_policy.max_retries = 2;
-        iqdb_policy.cache_ttl = std::chrono::seconds(300);
-        instance.set_domain_policy("iqdb.org", iqdb_policy);
-
-        net::DomainPolicy ascii2d_policy;
-        ascii2d_policy.rate_limit_rps = 0.5;
-        ascii2d_policy.burst_capacity = 2;
-        ascii2d_policy.max_concurrent_requests = 1;
-        ascii2d_policy.max_retries = 2;
-        ascii2d_policy.cache_ttl = std::chrono::seconds(300);
-        instance.set_domain_policy("ascii2d.net", ascii2d_policy);
+        net::DomainPolicy saucenao_policy;
+        saucenao_policy.rate_limit_rps = 0.5;
+        saucenao_policy.burst_capacity = 2;
+        saucenao_policy.max_concurrent_requests = 1;
+        saucenao_policy.max_retries = 2;
+        saucenao_policy.cache_ttl = std::chrono::seconds(300);
+        instance.set_domain_policy("saucenao.com", saucenao_policy);
 
         instance.set_log_callback([](const net::RequestLogEvent& ev) {
             std::ostringstream ss;
@@ -239,7 +214,7 @@ net::HttpClient& get_sauce_http_client() {
 dpp::slashcommand create_sauce_slash_command() {
     return dpp::slashcommand(
                "sauce",
-               "Search image source across multiple anime reverse search engines", 0)
+               "Search image source using SauceNAO reverse search engine", 0)
         .add_option(dpp::command_option(
             dpp::co_string, "link", "Discord message link or direct image URL",
             true));
@@ -323,18 +298,25 @@ static std::string extract_image_url_from_message(const dpp::message &target) {
     return "";
 }
 
-// --- Engine 1: Trace.moe Official API ---
+// --- Exclusive Engine: SauceNAO (Official Anime & Artwork Search API) ---
 
-static SearchResult search_tracemoe(const std::string &image_url, EngineDiagnosticReport &diag) {
+static SearchResult search_saucenao(const std::string &image_url, EngineDiagnosticReport &diag) {
     SearchResult res;
-    res.engine_name = "Trace.moe (Anime Scene)";
+    res.engine_name = "SauceNAO API";
     diag.engine_name = res.engine_name;
-    diag.request_url = "https://api.trace.moe/search?url=" + dpp::utility::url_encode(image_url);
+
+    std::string api_url = "https://saucenao.com/search.php?db=999&output_type=2&url=" + dpp::utility::url_encode(image_url);
+    if (const char *env_key = std::getenv("SAUCENAO_API_KEY")) {
+        if (std::strlen(env_key) > 0) {
+            api_url += "&api_key=" + std::string(env_key);
+        }
+    }
+    diag.request_url = api_url;
 
     net::HttpRequest req;
     req.method = "GET";
-    req.url = diag.request_url;
-    req.timeout = std::chrono::milliseconds(8000);
+    req.url = api_url;
+    req.timeout = std::chrono::milliseconds(10000);
 
     net::HttpResponse response = get_sauce_http_client().execute(req);
 
@@ -350,47 +332,47 @@ static SearchResult search_tracemoe(const std::string &image_url, EngineDiagnost
     }
 
     try {
-        auto j = dpp::json::parse(response.body);
-        if (j.contains("result") && j["result"].is_array()) {
-            const auto &results = j["result"];
-            diag.parsed_result_count = results.size();
+        auto root = dpp::json::parse(response.body);
+        if (root.contains("results") && root["results"].is_array() && !root["results"].empty()) {
+            diag.parsed_result_count = root["results"].size();
 
-            for (size_t idx = 0; idx < results.size(); ++idx) {
-                const auto &item = results[idx];
+            for (const auto &item : root["results"]) {
                 CandidateDetail cand;
-
-                if (item.contains("similarity") && item["similarity"].is_number()) {
-                    cand.similarity = item["similarity"].get<float>() * 100.0f;
-                }
-
-                if (item.contains("anilist")) {
-                    const auto &anilist = item["anilist"];
-                    if (anilist.contains("id") && anilist["id"].is_number()) {
-                        uint64_t id = anilist["id"].get<uint64_t>();
-                        cand.source_url = "https://anilist.co/anime/" + std::to_string(id);
-                        cand.id_info = "AniList ID: " + std::to_string(id);
-                    }
-
-                    if (anilist.contains("title")) {
-                        const auto &title_obj = anilist["title"];
-                        if (title_obj.contains("english") && title_obj["english"].is_string() &&
-                            !title_obj["english"].get<std::string>().empty()) {
-                            cand.title = title_obj["english"].get<std::string>();
-                        } else if (title_obj.contains("romaji") && title_obj["romaji"].is_string() &&
-                                   !title_obj["romaji"].get<std::string>().empty()) {
-                            cand.title = title_obj["romaji"].get<std::string>();
-                        } else if (title_obj.contains("native") && title_obj["native"].is_string()) {
-                            cand.title = title_obj["native"].get<std::string>();
+                if (item.contains("header")) {
+                    const auto &header = item["header"];
+                    if (header.contains("similarity")) {
+                        try {
+                            cand.similarity = std::stof(header["similarity"].get<std::string>());
+                        } catch (...) {
+                            if (header["similarity"].is_number()) {
+                                cand.similarity = header["similarity"].get<float>();
+                            }
                         }
                     }
+                    cand.thumbnail_url = header.value("thumbnail", "");
                 }
 
-                if (item.contains("episode") && item["episode"].is_number()) {
-                    cand.extra_info = "Episode " + std::to_string(item["episode"].get<int>());
-                }
+                if (item.contains("data")) {
+                    const auto &data = item["data"];
+                    if (data.contains("ext_urls") && data["ext_urls"].is_array() && !data["ext_urls"].empty()) {
+                        cand.source_url = data["ext_urls"][0].get<std::string>();
+                    } else if (data.contains("source") && !data["source"].is_null()) {
+                        cand.source_url = data["source"].get<std::string>();
+                    }
 
-                if (item.contains("image") && item["image"].is_string()) {
-                    cand.thumbnail_url = item["image"].get<std::string>();
+                    if (data.contains("title") && !data["title"].is_null()) {
+                        cand.title = data["title"].get<std::string>();
+                    } else if (data.contains("jp_name") && !data["jp_name"].is_null()) {
+                        cand.title = data["jp_name"].get<std::string>();
+                    } else if (data.contains("source") && !data["source"].is_null()) {
+                        cand.title = data["source"].get<std::string>();
+                    }
+
+                    if (data.contains("member_name") && !data["member_name"].is_null()) {
+                        res.author = data["member_name"].get<std::string>();
+                    } else if (data.contains("author_name") && !data["author_name"].is_null()) {
+                        res.author = data["author_name"].get<std::string>();
+                    }
                 }
 
                 if (cand.similarity >= 50.0f && !cand.source_url.empty()) {
@@ -398,312 +380,55 @@ static SearchResult search_tracemoe(const std::string &image_url, EngineDiagnost
                     cand.rejection_reason = "None (Accepted)";
                 } else if (cand.source_url.empty()) {
                     cand.accepted = false;
-                    cand.rejection_reason = "Missing source URL";
+                    cand.rejection_reason = "Missing source URL in SauceNAO result data";
                 } else {
                     cand.accepted = false;
-                    cand.rejection_reason = "Similarity score (" + std::to_string(static_cast<int>(cand.similarity)) + "%) below threshold (50.0%)";
+                    cand.rejection_reason = "Similarity score (" + std::to_string(static_cast<int>(cand.similarity)) + "%) below threshold (50%)";
                 }
 
                 diag.extracted_candidates.push_back(cand);
 
-                if (idx == 0) {
+                if (cand.accepted && (res.similarity < cand.similarity)) {
                     res.similarity = cand.similarity;
                     res.source_url = cand.source_url;
                     res.title = cand.title;
                     res.thumbnail_url = cand.thumbnail_url;
-                    res.extra_info = cand.extra_info;
                 }
             }
-        }
-    } catch (const std::exception &ex) {
-        diag.engine_rejection_reason = std::string("Trace.moe JSON parsing exception: ") + ex.what();
-    }
-
-    if (diag.parsed_result_count == 0) {
-        diag.engine_rejection_reason = "No matching scene results found in Trace.moe response array.";
-    } else {
-        diag.engine_rejection_reason = "Results parsed (" + std::to_string(diag.parsed_result_count) + "), top candidate evaluated.";
-    }
-
-    return res;
-}
-
-// --- Engine 2: AniList Official API ---
-
-static SearchResult search_anilist(const std::string &image_url, EngineDiagnosticReport &diag) {
-    SearchResult res;
-    res.engine_name = "AniList API (GraphQL Search)";
-    diag.engine_name = res.engine_name;
-    diag.request_url = "https://graphql.anilist.co/";
-
-    net::HttpRequest req;
-    req.method = "POST";
-    req.url = "https://graphql.anilist.co/";
-    req.headers["Content-Type"] = "application/json";
-    req.headers["Accept"] = "application/json";
-    req.body = R"({"query":"query { Page(perPage: 1) { media(type: ANIME, sort: POPULARITY_DESC) { id title { english romaji native } coverImage { large } siteUrl } } }"})";
-    req.timeout = std::chrono::milliseconds(8000);
-
-    net::HttpResponse response = get_sauce_http_client().execute(req);
-
-    diag.http_status = response.status_code;
-    diag.response_time_ms = response.latency.count();
-    diag.http_success = response.is_success();
-    diag.error_message = response.error_message;
-    diag.raw_response_body = response.body;
-
-    if (!response.is_success() || response.body.empty()) {
-        diag.engine_rejection_reason = "HTTP request failed or empty body.";
-        return res;
-    }
-
-    try {
-        auto j = dpp::json::parse(response.body);
-        if (j.contains("data") && j["data"].contains("Page") && j["data"]["Page"].contains("media")) {
-            const auto &media_list = j["data"]["Page"]["media"];
-            diag.parsed_result_count = media_list.size();
-
-            for (const auto &item : media_list) {
-                CandidateDetail cand;
-                if (item.contains("id")) {
-                    uint64_t id = item["id"].get<uint64_t>();
-                    cand.id_info = "AniList ID: " + std::to_string(id);
-                }
-                if (item.contains("siteUrl")) {
-                    cand.source_url = item["siteUrl"].get<std::string>();
-                }
-                if (item.contains("title")) {
-                    const auto &t = item["title"];
-                    if (t.contains("english") && !t["english"].is_null()) cand.title = t["english"].get<std::string>();
-                    else if (t.contains("romaji") && !t["romaji"].is_null()) cand.title = t["romaji"].get<std::string>();
-                }
-                if (item.contains("coverImage") && item["coverImage"].contains("large")) {
-                    cand.thumbnail_url = item["coverImage"]["large"].get<std::string>();
-                }
-
-                cand.similarity = 0.0f;
-                cand.accepted = false;
-                cand.rejection_reason = "AniList GraphQL metadata query does not perform direct visual reverse-image similarity matching without scene fingerprint.";
-                diag.extracted_candidates.push_back(cand);
-            }
-        }
-    } catch (const std::exception &ex) {
-        diag.engine_rejection_reason = std::string("AniList JSON parsing exception: ") + ex.what();
-    }
-
-    if (diag.extracted_candidates.empty()) {
-        diag.engine_rejection_reason = "No media records returned from AniList GraphQL query.";
-    } else {
-        diag.engine_rejection_reason = "GraphQL metadata parsed, direct image similarity unconfirmed.";
-    }
-
-    return res;
-}
-
-// --- Engine 3: IQDB Search ---
-
-static SearchResult search_iqdb(const std::string &image_url, EngineDiagnosticReport &diag) {
-    SearchResult res;
-    res.engine_name = "IQDB (Booru Search)";
-    diag.engine_name = res.engine_name;
-    diag.request_url = "https://iqdb.org/";
-
-    net::HttpRequest req;
-    req.method = "POST";
-    req.url = "https://iqdb.org/";
-    req.headers["Content-Type"] = "application/x-www-form-urlencoded";
-    req.body = "url=" + dpp::utility::url_encode(image_url);
-    req.timeout = std::chrono::milliseconds(10000);
-
-    net::HttpResponse response = get_sauce_http_client().execute(req);
-
-    diag.http_status = response.status_code;
-    diag.response_time_ms = response.latency.count();
-    diag.http_success = response.is_success();
-    diag.error_message = response.error_message;
-    diag.raw_response_body = response.body;
-
-    if (!response.is_success() || response.body.empty()) {
-        diag.engine_rejection_reason = "HTTP request failed (status " + std::to_string(response.status_code) + ") or empty body.";
-        return res;
-    }
-
-    const std::string &html = response.body;
-    auto match_pos = html.find("Best match");
-    if (match_pos == std::string::npos) {
-        match_pos = html.find("Additional match");
-    }
-
-    if (match_pos != std::string::npos) {
-        diag.parsed_result_count = 1;
-        CandidateDetail cand;
-
-        auto href_pos = html.find("href=\"//", match_pos);
-        if (href_pos != std::string::npos) {
-            auto href_start = href_pos + 8;
-            auto href_end = html.find("\"", href_start);
-            if (href_end != std::string::npos) {
-                cand.source_url = "https://" + html.substr(href_start, href_end - href_start);
-            }
-        }
-
-        auto sim_pos = html.find("% similarity", match_pos);
-        if (sim_pos != std::string::npos && sim_pos >= 5) {
-            auto num_start = html.rfind(" ", sim_pos - 1);
-            if (num_start != std::string::npos) {
-                try {
-                    cand.similarity = std::stof(html.substr(num_start + 1, sim_pos - num_start - 1));
-                } catch (...) {}
-            }
-        }
-
-        auto alt_pos = html.find("alt=\"", match_pos);
-        if (alt_pos != std::string::npos) {
-            auto alt_start = alt_pos + 5;
-            auto alt_end = html.find("\"", alt_start);
-            if (alt_end != std::string::npos) {
-                cand.title = html.substr(alt_start, alt_end - alt_start);
-            }
-        }
-
-        if (cand.similarity >= 50.0f && !cand.source_url.empty()) {
-            cand.accepted = true;
-            cand.rejection_reason = "None (Accepted)";
-        } else if (cand.source_url.empty()) {
-            cand.accepted = false;
-            cand.rejection_reason = "Missing source URL in parsed HTML";
         } else {
-            cand.accepted = false;
-            cand.rejection_reason = "Similarity score (" + std::to_string(static_cast<int>(cand.similarity)) + "%) below threshold (50.0%)";
+            diag.engine_rejection_reason = "No matching results array found in SauceNAO response JSON.";
         }
-
-        diag.extracted_candidates.push_back(cand);
-        res.similarity = cand.similarity;
-        res.source_url = cand.source_url;
-        res.title = cand.title;
+    } catch (const std::exception &ex) {
+        diag.engine_rejection_reason = std::string("JSON parsing error: ") + ex.what();
     }
 
-    if (diag.parsed_result_count == 0) {
-        diag.engine_rejection_reason = "No 'Best match' or 'Additional match' HTML tags found in IQDB response.";
-    } else {
-        diag.engine_rejection_reason = "Candidate parsed from HTML, evaluated against matching threshold.";
+    if (diag.parsed_result_count > 0 && res.source_url.empty()) {
+        diag.engine_rejection_reason = "Candidates parsed, but none met requirements (>= 50% similarity with valid URL).";
     }
 
     return res;
 }
 
-// --- Engine 4: Ascii2D Search ---
-
-static SearchResult search_ascii2d(const std::string &image_url, EngineDiagnosticReport &diag) {
-    SearchResult res;
-    res.engine_name = "Ascii2D (Pixiv/Twitter)";
-    diag.engine_name = res.engine_name;
-    diag.request_url = "https://ascii2d.net/search/url/" + dpp::utility::url_encode(image_url);
-
-    net::HttpRequest req;
-    req.method = "GET";
-    req.url = diag.request_url;
-    req.timeout = std::chrono::milliseconds(10000);
-
-    net::HttpResponse response = get_sauce_http_client().execute(req);
-
-    diag.http_status = response.status_code;
-    diag.response_time_ms = response.latency.count();
-    diag.http_success = response.is_success();
-    diag.error_message = response.error_message;
-    diag.raw_response_body = response.body;
-
-    if (!response.is_success() || response.body.empty()) {
-        diag.engine_rejection_reason = "HTTP request failed (status " + std::to_string(response.status_code) + ") or empty body.";
-        return res;
-    }
-
-    const std::string &html = response.body;
-
-    auto link_pos = html.find("https://www.pixiv.net/member_illust.php");
-    if (link_pos == std::string::npos) {
-        link_pos = html.find("https://www.pixiv.net/artworks/");
-    }
-    if (link_pos == std::string::npos) {
-        link_pos = html.find("https://twitter.com/");
-    }
-    if (link_pos == std::string::npos) {
-        link_pos = html.find("https://x.com/");
-    }
-
-    if (link_pos != std::string::npos) {
-        diag.parsed_result_count = 1;
-        CandidateDetail cand;
-
-        auto link_end = html.find("\"", link_pos);
-        if (link_end != std::string::npos) {
-            cand.source_url = html.substr(link_pos, link_end - link_pos);
-            cand.similarity = 85.0f;
-            cand.title = "Matched Artwork Post";
-            cand.accepted = true;
-            cand.rejection_reason = "None (Accepted)";
-
-            diag.extracted_candidates.push_back(cand);
-            res.similarity = cand.similarity;
-            res.source_url = cand.source_url;
-            res.title = cand.title;
-        }
-    }
-
-    if (diag.parsed_result_count == 0) {
-        diag.engine_rejection_reason = "No Pixiv or Twitter/X post URL links found in Ascii2D response HTML.";
-    } else {
-        diag.engine_rejection_reason = "Artwork post link extracted and accepted.";
-    }
-
-    return res;
-}
-
-// --- Aggregate Multi-Engine Search ---
+// --- Search Handler using SauceNAO ---
 
 static void perform_sauce_search(const std::string &image_url,
                                  std::function<void(dpp::message)> respond) {
-    logger::info("commands::sauce", "Starting multi-engine search for image: " + image_url);
+    logger::info("commands::sauce", "Starting SauceNAO API search for image: " + image_url);
 
     std::thread([image_url, respond]() {
-        EngineDiagnosticReport diag_trace, diag_anilist, diag_iqdb, diag_ascii2d;
+        EngineDiagnosticReport diag_sauce;
+        SearchResult result = search_saucenao(image_url, diag_sauce);
 
-        auto fut_trace = std::async(std::launch::async, search_tracemoe, image_url, std::ref(diag_trace));
-        auto fut_anilist = std::async(std::launch::async, search_anilist, image_url, std::ref(diag_anilist));
-        auto fut_iqdb = std::async(std::launch::async, search_iqdb, image_url, std::ref(diag_iqdb));
-        auto fut_ascii2d = std::async(std::launch::async, search_ascii2d, image_url, std::ref(diag_ascii2d));
-
-        std::vector<SearchResult> results;
-        results.push_back(fut_trace.get());
-        results.push_back(fut_anilist.get());
-        results.push_back(fut_iqdb.get());
-        results.push_back(fut_ascii2d.get());
-
-        std::vector<EngineDiagnosticReport> diagnostic_reports = {
-            diag_trace, diag_anilist, diag_iqdb, diag_ascii2d
-        };
+        std::vector<EngineDiagnosticReport> diagnostic_reports = { diag_sauce };
 
         dpp::embed embed;
         embed.set_timestamp(time(nullptr));
 
-        SearchResult best_match;
-        float max_sim = -1.0f;
-
-        for (const auto &r : results) {
-            if (r.similarity > max_sim && !r.source_url.empty()) {
-                max_sim = r.similarity;
-                best_match = r;
-            }
-        }
-
-        if (max_sim <= 0.0f || best_match.source_url.empty()) {
-            // Trigger detailed diagnostic logging using ONLY logger namespace!
+        if (result.similarity <= 0.0f || result.source_url.empty()) {
             log_no_match_diagnostic(image_url, diagnostic_reports);
 
             embed.set_title("No Sauce Found")
-                .set_description(
-                    "Could not find matching image sources across "
-                    "Trace.moe, AniList, IQDB, or Ascii2D engines.")
+                .set_description("Could not find matching image sources on SauceNAO.")
                 .set_color(0xE74C3C)
                 .set_image(image_url);
             respond(dpp::message().add_embed(embed));
@@ -711,54 +436,53 @@ static void perform_sauce_search(const std::string &image_url,
         }
 
         uint32_t color =
-            (best_match.similarity >= 80.0f)
+            (result.similarity >= 80.0f)
                 ? 0x2ECC71
-                : ((best_match.similarity >= 50.0f) ? 0xF1C40F : 0xE74C3C);
+                : ((result.similarity >= 50.0f) ? 0xF1C40F : 0xE74C3C);
 
-        embed.set_title("Multi-Engine Image Search Results")
+        embed.set_title("SauceNAO Image Search Results")
             .set_color(color)
-            .set_footer(dpp::embed_footer().set_text(
-                "Searched via Trace.moe, AniList, IQDB & Ascii2D (Polite HTTP Engine)"));
+            .set_footer(dpp::embed_footer().set_text("Searched via SauceNAO API"));
 
-        if (!best_match.thumbnail_url.empty()) {
-            embed.set_thumbnail(best_match.thumbnail_url);
+        if (!result.thumbnail_url.empty()) {
+            embed.set_thumbnail(result.thumbnail_url);
         } else {
             embed.set_thumbnail(image_url);
         }
 
-        embed.add_field("Best Engine", best_match.engine_name, true);
+        embed.add_field("Engine", result.engine_name, true);
         embed.add_field(
             "Similarity",
-            std::to_string(static_cast<int>(best_match.similarity)) + "%",
+            std::to_string(static_cast<int>(result.similarity)) + "%",
             true);
 
-        if (!best_match.title.empty()) {
+        if (!result.title.empty()) {
             embed.add_field("Title",
-                            "[" + best_match.title + "](" +
-                                best_match.source_url + ")",
+                            "[" + result.title + "](" +
+                                result.source_url + ")",
                             false);
         } else {
             embed.add_field("Title", "Matched Result", false);
         }
 
-        if (!best_match.extra_info.empty()) {
-            embed.add_field("Details", best_match.extra_info, true);
+        if (!result.extra_info.empty()) {
+            embed.add_field("Details", result.extra_info, true);
         }
 
-        if (!best_match.author.empty()) {
-            if (!best_match.author_url.empty()) {
+        if (!result.author.empty()) {
+            if (!result.author_url.empty()) {
                 embed.add_field("Author",
-                                "[" + best_match.author + "](" +
-                                    best_match.author_url + ")",
+                                "[" + result.author + "](" +
+                                    result.author_url + ")",
                                 false);
             } else {
-                embed.add_field("Author", best_match.author, false);
+                embed.add_field("Author", result.author, false);
             }
         }
 
         embed.add_field("Source Link",
                         "[Click here to view original post](" +
-                            best_match.source_url + ")",
+                            result.source_url + ")",
                         false);
         embed.add_field("Original Image", "[View Image](" + image_url + ")",
                         false);

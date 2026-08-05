@@ -145,6 +145,12 @@ BotConfig load_config() {
         throw std::runtime_error("DISCORD_TOKEN is required in environment or config file");
     }
 
+    for (const auto& [key, value] : env_vars) {
+        if (!key.empty() && std::getenv(key.c_str()) == nullptr) {
+            setenv(key.c_str(), value.c_str(), 1);
+        }
+    }
+
     bot_config.token = env_vars["DISCORD_TOKEN"];
 
     if (env_vars.find("DISCORD_GUILD_ID") != env_vars.end() && !env_vars["DISCORD_GUILD_ID"].empty()) {
