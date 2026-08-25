@@ -18,9 +18,10 @@ namespace commands {
 
 // --- Diagnostic Logging Structures ---
 
-struct CandidateDetail {
+struct candidate_detail {
     std::string title;
     float similarity = 0.0f;
+    std::string ext_url;
     std::string source_url;
     std::string thumbnail_url;
     std::string extra_info;
@@ -38,7 +39,7 @@ struct EngineDiagnosticReport {
     std::string error_message;
     std::string raw_response_body;
     size_t parsed_result_count = 0;
-    std::vector<CandidateDetail> extracted_candidates;
+    std::vector<candidate_detail> extracted_candidates;
     std::string engine_rejection_reason;
 };
 
@@ -224,7 +225,7 @@ dpp::slashcommand create_sauce_context_command() {
     return dpp::slashcommand("sauce", "", 0).set_type(dpp::ctxm_message);
 }
 
-struct SearchResult {
+struct search_result {
     std::string engine_name;
     float similarity = 0.0f;
     std::string title;
@@ -301,8 +302,8 @@ static std::string extract_image_url_from_message(const dpp::message &target) {
 
 // --- Exclusive Engine: SauceNAO (Official Anime & Artwork Search API) ---
 
-static SearchResult search_saucenao(const std::string &image_url, EngineDiagnosticReport &diag) {
-    SearchResult res;
+static search_result search_saucenao(const std::string &image_url, EngineDiagnosticReport &diag) {
+    search_result res;
     res.engine_name = "SauceNAO API";
     diag.engine_name = res.engine_name;
 
@@ -338,7 +339,7 @@ static SearchResult search_saucenao(const std::string &image_url, EngineDiagnost
             diag.parsed_result_count = root["results"].size();
 
             for (const auto &item : root["results"]) {
-                CandidateDetail cand;
+                candidate_detail cand;
                 std::string extra_src_url = "";
 
                 if (item.contains("header")) {
@@ -352,30 +353,31 @@ static SearchResult search_saucenao(const std::string &image_url, EngineDiagnost
                             }
                         }
                     }
+                    if (cand.similarity <= 50.0f) {
+                        continue;
+                    }
                     cand.thumbnail_url = header.value("thumbnail", "");
                 }
 
                 if (item.contains("data")) {
                     const auto &data = item["data"];
                     if (data.contains("ext_urls") && data["ext_urls"].is_array() && !data["ext_urls"].empty()) {
-                        cand.source_url = data["ext_urls"][0].get<std::string>();
+                        cand.ext_url = data["ext_urls"][0].get<std::string>();
                     }
 
                     if (data.contains("source") && !data["source"].is_null()) {
                         std::string src_val = data["source"].get<std::string>();
                         if (src_val.rfind("http://", 0) == 0 || src_val.rfind("https://", 0) == 0) {
                             extra_src_url = src_val;
-                            if (cand.source_url.empty()) {
-                                cand.source_url = src_val;
-                            }
+                            cand.source_url = src_val;
                         }
                     }
 
                     // Extract Author / Artist
                     std::string author_name = "";
-                    if (data.contains("member_name") && !data["member_name"].is_null() && !data["member_name"].get<std::string>().empty()) {
+                    if (data.contains("member_name") && !data["member_name"].is_null()) {
                         author_name = data["member_name"].get<std::string>();
-                    } else if (data.contains("author_name") && !data["author_name"].is_null() && !data["author_name"].get<std::string>().empty()) {
+                    } else if (data.contains("author_name") && !data["author_name"].is_null()) {
                         author_name = data["author_name"].get<std::string>();
                     } else if (data.contains("creator") && !data["creator"].is_null()) {
                         if (data["creator"].is_string() && !data["creator"].get<std::string>().empty()) {
@@ -389,7 +391,7 @@ static SearchResult search_saucenao(const std::string &image_url, EngineDiagnost
                         author_name = "@" + data["twitter_user_handle"].get<std::string>();
                     }
 
-                    // Extract Title (avoiding raw URLs as title text)
+                    // Extract Title 
                     std::string raw_title = "";
                     if (data.contains("title") && !data["title"].is_null() && !data["title"].get<std::string>().empty()) {
                         raw_title = data["title"].get<std::string>();
@@ -467,7 +469,7 @@ static void perform_sauce_search(const std::string &image_url,
 
     std::thread([image_url, respond]() {
         EngineDiagnosticReport diag_sauce;
-        SearchResult result = search_saucenao(image_url, diag_sauce);
+        search_result result = search_saucenao(image_url, diag_sauce);
 
         std::vector<EngineDiagnosticReport> diagnostic_reports = { diag_sauce };
 
@@ -492,7 +494,7 @@ static void perform_sauce_search(const std::string &image_url,
 
         embed.set_title("Image Search Result")
             .set_color(color)
-            .set_footer(dpp::embed_footer().set_text("Searched via SauceNAO API"));
+            .set_footer(dpp::embed_footer().set_text("Searched via SauceNAO"));
 
         if (!result.thumbnail_url.empty()) {
             embed.set_thumbnail(result.thumbnail_url);
@@ -500,7 +502,6 @@ static void perform_sauce_search(const std::string &image_url,
             embed.set_thumbnail(image_url);
         }
 
-        embed.add_field("Engine", result.engine_name, true);
         embed.add_field(
             "Similarity",
             std::to_string(static_cast<int>(result.similarity)) + "%",
@@ -526,18 +527,9 @@ static void perform_sauce_search(const std::string &image_url,
             }
         }
 
-        if (!result.extra_source_url.empty() && result.extra_source_url != result.source_url) {
-            embed.add_field("Original Source",
-                            "[Click here to view original post](" +
-                                result.extra_source_url + ")",
-                            false);
-        }
-
         embed.add_field("Source Link",
                         "[Click here to view original post](" +
                             result.source_url + ")",
-                        false);
-        embed.add_field("Original Image", "[View Image](" + image_url + ")",
                         false);
 
         respond(dpp::message().add_embed(embed));
